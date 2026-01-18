@@ -61,8 +61,8 @@ class GraphNetwork(nn.Module):
 
 
     def forward(self, 
-                nodes: torch.Tensor,       # N x (2D+1) (N = number of bodies, D = dimension)
-                edge_index: torch.Tensor   # 2 x E (Indices of senders (row) and receivers (collumn), E = total number of edges = N(N-1))
+                nodes: torch.Tensor,       # N x (2D+1) (N = number of bodies, D = dimension, use convention (x,y,v_x,v_y,m) for D=2)
+                edge_index: torch.Tensor   # 2 x E (Indices of senders (row 1) and receivers (row 2), E = total number of edges = N(N-1))
                 ) -> torch.Tensor:
         
         senders, receivers = edge_index    # extract sender and receiver indices from edge_index
