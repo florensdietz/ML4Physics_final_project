@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 from typing import Tuple, List
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+
 
 
 def TrainingAlgorithm(model: nn.Module,
@@ -25,7 +27,9 @@ def TrainingAlgorithm(model: nn.Module,
 
 
     for epoch in range(num_epochs):
-        epoch_loss = 0.0
+
+        total_train_loss = 0.0
+
 
         for batch in train_loader:
             nodes_t, vel_next_true, edge_index = batch
@@ -50,7 +54,7 @@ def TrainingAlgorithm(model: nn.Module,
             optimizer.step()
 
             total_train_loss += loss.item()
-
+        
         # Add training loss
         avg_train_loss = total_train_loss / len(train_loader)
         train_losses.append(avg_train_loss)
@@ -58,8 +62,9 @@ def TrainingAlgorithm(model: nn.Module,
         # Add validation loss
         avg_val_loss = evaluate(model, val_loader, device=device)
         val_losses.append(avg_val_loss)
-    
-    torch.save(model.state_dict(), "models/model_weights.pth")
+
+        print(f"Epoch {epoch+1}: Avg Train Loss={avg_train_loss:.6f}, Val Loss={avg_val_loss:.6f}")
+    torch.save(model.state_dict(), "model_weights.pth")
 
     return train_losses, val_losses
     
@@ -72,7 +77,7 @@ def evaluate(model: nn.Module,
     model.eval()
 
     loss_fn = nn.L1Loss()   
-    total_loss = 0.0
+    total_val_loss = 0.0
 
     with torch.no_grad():
         for nodes_t, vel_next_true, edge_index in val_loader:
