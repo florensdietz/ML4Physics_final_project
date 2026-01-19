@@ -7,5 +7,6 @@ There you can also create the data that is used to test if the model generalizes
 Right now, the model is trained to minimize the the L1 loss of the updated velocity $v_{t+1}$ between the simulated data and the predicted data. It might be better to change that to optimize for the updates $\Delta v$.
 
 To do:
-1. Symbolic regression
-2. Create some plots for presentation
+1. Check if model generalizes properly (zero-shot generalization)
+2. Symbolic regression
+3. Create some plots for presentation
