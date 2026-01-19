@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import os
 
 
 class GraphNetwork(nn.Module):
@@ -32,6 +33,7 @@ class GraphNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(num_hidden, msg_dim)  
         )
+
     
     def pooling_function(self,
                          messages: torch.Tensor,
