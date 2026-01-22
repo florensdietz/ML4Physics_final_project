@@ -90,7 +90,7 @@ def load_train_val_loaders(
 
 import torch
 import torch.nn as nn
-from typing import Dict, Optional
+from typing import Dict
 
 @torch.no_grad()
 def evaluate(
@@ -100,6 +100,7 @@ def evaluate(
     rollout_steps: int = 0,
     dt: float = 1.0,
     update_positions_in_rollout: bool = True,
+    strict_rollout_length: bool = True,   # if True: raise if dataset too short for requested rollout
 ) -> Dict[str, float]:
     """
     Evaluates a GN model.
@@ -121,10 +122,6 @@ def evaluate(
     total_one_step = 0.0
     n_batches = 0
 
-    # We will need access to consecutive ground-truth steps for rollout.
-    # Your current dataset/loader yields only (nodes_t, vel_{t+1}) for each t independently,
-    # so rollout across time requires that the loader/dataset is ordered and provides consecutive steps.
-    # If your DataLoader shuffles, TURN SHUFFLE OFF for rollout evaluation.
     total_rollout = 0.0
     n_rollout_batches = 0
 
@@ -141,8 +138,7 @@ def evaluate(
         return new_nodes
 
     # ---- ONE-STEP EVAL ----
-    for batch in loader:
-        nodes_t, vel_next_true, edge_index = batch
+    for nodes_t, vel_next_true, edge_index in loader:
         nodes_t = nodes_t.to(device).float()
         vel_next_true = vel_next_true.to(device).float()
         edge_index = edge_index.to(device)
@@ -156,48 +152,47 @@ def evaluate(
     results = {"one_step_l1": total_one_step / max(1, n_batches)}
 
     # ---- ROLLOUT EVAL (K-step) ----
-    # This requires consecutive samples: (t, t+1, ..., t+K).
-    # With your current Dataset API, we can do it if:
-    #   - loader.dataset is an underlying GNPhysicsDataset or Subset thereof
-    #   - and shuffle=False
-    #
-    # We'll try to access the underlying dataset to get consecutive items.
     if rollout_steps and rollout_steps > 0:
-        # Try to get the dataset behind random_split Subset if used
         ds = loader.dataset
         indices = None
+
+        # random_split returns a Subset with .dataset and .indices
         if hasattr(ds, "indices") and hasattr(ds, "dataset"):
-            # Subset returned by random_split
             indices = ds.indices
             base_ds = ds.dataset
         else:
             base_ds = ds
 
-        # We will iterate over valid start points
-        # Need nodes_t at start, and ground-truth velocities for next K steps.
-        # Each item gives: nodes_t and vel_{t+1}^{true}.
-        # For comparing at step j we compare predicted vel_{t+j} vs true vel_{t+j}.
+        # helper to map "subset index" -> "base dataset item"
         if indices is None:
-            # dataset is not a Subset
             T = len(base_ds)
-            valid_starts = range(0, T - rollout_steps)
-            get_item = lambda i: base_ds[i]
+            def get_item(i: int):
+                return base_ds[i]
         else:
-            # Subset: indices map into base dataset
             T = len(indices)
-            valid_starts = range(0, T - rollout_steps)
-            get_item = lambda j: base_ds[indices[j]]
+            def get_item(j: int):
+                return base_ds[indices[j]]
+
+        # If dataset is too short for requested rollout, either raise or clamp
+        if T < rollout_steps:
+            if strict_rollout_length:
+                raise ValueError(f"rollout_steps={rollout_steps} > available sequence length T={T}")
+            rollout_steps_eff = T
+        else:
+            rollout_steps_eff = rollout_steps
+
+        # IMPORTANT FIX: +1 so that if T == rollout_steps, start=0 is included
+        valid_starts = range(0, T - rollout_steps_eff + 1)
 
         for start in valid_starts:
-            # Get initial state
+            # initial state at time "start"
             nodes_0, _, edge_index0 = get_item(start)
             nodes = nodes_0.to(device).float()
             edge_index0 = edge_index0.to(device)
 
-            # Roll out K steps
             rollout_loss = 0.0
-            for k in range(rollout_steps):
-                # True target for this step is vel_{t+k+1}
+            for k in range(rollout_steps_eff):
+                # Dataset item i contains nodes_i and vel_{i+1}
                 _, vel_true, _ = get_item(start + k)
                 vel_true = vel_true.to(device).float()
 
@@ -206,12 +201,16 @@ def evaluate(
 
                 rollout_loss += l1(vel_pred, vel_true).item()
 
-                # advance state using predictions
+                # advance state autoregressively
                 nodes = step_state(nodes, vel_pred)
 
-            total_rollout += rollout_loss / rollout_steps
+            total_rollout += rollout_loss / rollout_steps_eff
             n_rollout_batches += 1
 
-        results["rollout_l1"] = total_rollout / max(1, n_rollout_batches)
+        # If no valid starts exist (can happen if T==0), report NaN instead of misleading 0
+        if n_rollout_batches == 0:
+            results["rollout_l1"] = float("nan")
+        else:
+            results["rollout_l1"] = total_rollout / n_rollout_batches
 
     return results
